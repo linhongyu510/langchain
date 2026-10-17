@@ -269,6 +269,66 @@ def test_filter_message_exclude_tool_calls_content_blocks() -> None:
     assert messages == messages_model_copy
 
 
+def test_filter_message_exclude_tool_calls_invalid_tool_calls() -> None:
+    """exclude_tool_calls should also filter invalid_tool_calls by id."""
+    tool_calls = [
+        {"name": "foo", "id": "1", "args": {}, "type": "tool_call"},
+    ]
+    invalid_tool_calls = [
+        {
+            "name": "bar",
+            "id": "2",
+            "args": "{",
+            "error": "parse",
+            "type": "invalid_tool_call",
+        },
+    ]
+    messages = [
+        AIMessage(
+            "response",
+            tool_calls=tool_calls,
+            invalid_tool_calls=invalid_tool_calls,
+            id="3",
+        ),
+    ]
+    messages_model_copy = [m.model_copy(deep=True) for m in messages]
+
+    # Exclude the invalid tool call id: it should be removed from
+    # invalid_tool_calls while the valid tool call remains.
+    actual = filter_messages(messages, exclude_tool_calls=["2"])
+    assert len(actual) == 1
+    assert isinstance(actual[0], AIMessage)
+    assert actual[0].invalid_tool_calls == []
+    assert actual[0].tool_calls == tool_calls
+
+    # Exclude the valid tool call id: the invalid_tool_calls with a different
+    # id should be preserved.
+    actual = filter_messages(messages, exclude_tool_calls=["1"])
+    assert len(actual) == 1
+    assert isinstance(actual[0], AIMessage)
+    assert actual[0].tool_calls == []
+    assert actual[0].invalid_tool_calls == invalid_tool_calls
+
+    # Exclude all ids: the message should be dropped entirely.
+    actual = filter_messages(messages, exclude_tool_calls=["1", "2"])
+    assert actual == []
+
+    # A message with only invalid_tool_calls, when that id is excluded,
+    # should be dropped.
+    only_invalid = [
+        AIMessage(
+            "response",
+            invalid_tool_calls=invalid_tool_calls,
+            id="4",
+        ),
+    ]
+    actual = filter_messages(only_invalid, exclude_tool_calls=["2"])
+    assert actual == []
+
+    # assert that we didn't mutate the original messages
+    assert messages == messages_model_copy
+
+
 _MESSAGES_TO_TRIM = [
     SystemMessage("This is a 4 token text."),
     HumanMessage("This is a 4 token text.", id="first"),
