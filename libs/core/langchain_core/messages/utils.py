@@ -585,6 +585,58 @@ def message_chunk_to_message(chunk: BaseMessage) -> BaseMessage:
     ignore_keys = ["type"]
     if isinstance(chunk, AIMessageChunk):
         ignore_keys.extend(["tool_call_chunks", "chunk_position"])
+        # When converting a chunk to a finalized message, re-parse tool call args
+        # from raw chunks using strict JSON instead of the partial-JSON-parsed
+        # tool_calls property. This prevents truncated args (e.g. from a stream
+        # that ends mid-tool-call) from being treated as valid tool calls.
+        if chunk.tool_call_chunks:
+            import json
+
+            tool_calls = []
+            invalid_tool_calls = []
+            for tc_chunk in chunk.tool_call_chunks:
+                raw_args = tc_chunk.get("args", "") or ""
+                name = tc_chunk.get("name") or ""
+                tc_id = tc_chunk.get("id")
+                try:
+                    parsed = json.loads(raw_args) if raw_args else {}
+                    if isinstance(parsed, dict):
+                        tool_calls.append(
+                            {
+                                "name": name,
+                                "args": parsed,
+                                "id": tc_id,
+                                "type": "tool_call",
+                            }
+                        )
+                    else:
+                        invalid_tool_calls.append(
+                            {
+                                "name": name,
+                                "args": raw_args,
+                                "id": tc_id,
+                                "type": "invalid_tool_call",
+                            }
+                        )
+                except (json.JSONDecodeError, ValueError):
+                    invalid_tool_calls.append(
+                        {
+                            "name": name,
+                            "args": raw_args,
+                            "id": tc_id,
+                            "type": "invalid_tool_call",
+                        }
+                    )
+            # Replace the partial-parsed tool_calls/invalid_tool_calls
+            result_kwargs = {
+                k: v for k, v in chunk.__dict__.items() if k not in ignore_keys
+            }
+            result_kwargs["tool_calls"] = tool_calls
+            result_kwargs["invalid_tool_calls"] = invalid_tool_calls
+            return cast(
+                "BaseMessage",
+                chunk.__class__.__mro__[1](**result_kwargs),
+            )
     return cast(
         "BaseMessage",
         chunk.__class__.__mro__[1](
