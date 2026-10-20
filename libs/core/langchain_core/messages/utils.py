@@ -956,13 +956,20 @@ def filter_messages(
 
         new_msg = msg
         if isinstance(exclude_tool_calls, (list, tuple, set)):
-            if isinstance(msg, AIMessage) and msg.tool_calls:
+            if isinstance(msg, AIMessage) and (
+                msg.tool_calls or msg.invalid_tool_calls
+            ):
                 tool_calls = [
                     tool_call
                     for tool_call in msg.tool_calls
                     if tool_call["id"] not in exclude_tool_calls
                 ]
-                if not tool_calls:
+                invalid_tool_calls = [
+                    invalid_call
+                    for invalid_call in msg.invalid_tool_calls
+                    if invalid_call["id"] not in exclude_tool_calls
+                ]
+                if not tool_calls and not invalid_tool_calls:
                     continue
 
                 content = msg.content
@@ -979,7 +986,11 @@ def filter_messages(
                     ]
 
                 new_msg = msg.model_copy(
-                    update={"tool_calls": tool_calls, "content": content}
+                    update={
+                        "tool_calls": tool_calls,
+                        "invalid_tool_calls": invalid_tool_calls,
+                        "content": content,
+                    }
                 )
             elif (
                 isinstance(msg, ToolMessage) and msg.tool_call_id in exclude_tool_calls
